@@ -1,0 +1,120 @@
+import cv2
+import pytesseract
+import numpy as np
+import win32com.client
+import deepl
+
+# Load your template images for each symbol
+templates = {
+    "inicio": cv2.imread('C:\Ingenieria en Sis Comp\Practicas\Kayser\Templates\Symbols\StartArrow.png', 0),
+    "decisionx": cv2.imread('C:\Ingenieria en Sis Comp\Practicas\Kayser\Templates\Symbols\Fork.png', 0),
+    "proceso": cv2.imread('process_template.png', 0),
+    "decisionm": cv2.imread('C:\Ingenieria en Sis Comp\Practicas\Kayser\Templates\Symbols\Branch.png', 0),
+    "final": cv2.imread('C:\Ingenieria en Sis Comp\Practicas\Kayser\Templates\Symbols\FinishArrow.png', 0),
+    # Add more templates as needed
+}
+
+# Load template for small marks
+mark_templates = {
+    "marca de subsección": cv2.imread('subsection_mark_template.png', 0),
+    # Add more mark templates as needed
+}
+
+
+def detect_symbol(image, template, threshold=0.7):
+    result = cv2.matchTemplate(image, template, cv2.TM_CCOEFF_NORMED)
+    loc = np.where(result >= threshold)
+    return loc
+
+
+def extract_text_and_marks(image_path):
+    image = cv2.imread(image_path)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    detected_symbols = {}
+    detected_marks = {}
+
+    for symbol_name, template in templates.items():
+        locations = detect_symbol(gray, template)
+        if locations:
+            detected_symbols[symbol_name] = locations
+
+    for mark_name, template in mark_templates.items():
+        locations = detect_symbol(gray, template)
+        if locations:
+            detected_marks[mark_name] = locations
+
+    # Extract text using OCR
+    text = pytesseract.image_to_string(image)
+    return text, detected_symbols, detected_marks
+
+
+def translate_text(text, target_lang='ES'):
+    auth_key = '658517c8-cb91-4bfe-9412-fca13e1c578d:fx'  # DeepL API key
+    translator = deepl.Translator(auth_key)
+    result = translator.translate_text(text, target_lang=target_lang)
+    return result.text
+
+
+def create_uml_in_visio(translated_text, detected_symbols, detected_marks):
+    visio = None
+    try:
+        pythoncom.CoInitialize()
+        visio = win32com.client.Dispatch("Visio.Application")
+        doc = visio.Documents.Add("")
+        page = visio.ActivePage
+
+        for symbol_name, locations in detected_symbols.items():
+            shape = None
+
+            for pt in zip(*locations[::-1]):
+                if symbol_name == "inicio-final":
+                    shape = page.DrawOval(pt[0], pt[1], pt[0] + 1, pt[1] + 1)
+                elif symbol_name == "decision":
+                    shape = page.DrawRectangle(pt[0], pt[1], pt[0] + 2, pt[1] + 2)
+                elif symbol_name == "proceso":
+                    shape = page.DrawRectangle(pt[0], pt[1], pt[0] + 3, pt[1] + 1.5)
+                elif symbol_name == "conector":
+                    shape = page.DrawLine(pt[0], pt[1], pt[0] + 2, pt[1])
+                # Add more shapes as needed
+
+                if shape:
+                    shape.Text = translated_text  # Assign the translated text to the shape
+
+                    # Check if there is a mark within this rectangle
+                    for mark_name, mark_locations in detected_marks.items():
+                        for mark_pt in zip(*mark_locations[::-1]):
+                            if (pt[0] <= mark_pt[0] <= pt[0] + 3) and (pt[1] <= mark_pt[1] <= pt[1] + 1.5):
+                                # Draw an annotation or small shape for the mark inside the rectangle
+                                mark_shape = page.DrawOval(mark_pt[0], mark_pt[1], mark_pt[0] + 0.5, mark_pt[1] + 0.5)
+                                mark_shape.Text = f"Mark: {mark_name}"
+
+        visio_path = 'translated_diagram.vsdx'
+        doc.SaveAs(visio_path)
+        print(f"Visio file saved as: {visio_path}")
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+
+    finally:
+        visio.Quit()
+        pythoncom.CoUninitialize()
+
+
+#Identify marks in the image
+
+
+##################################################################################
+# Main Workflow
+image_path = 'my_image_path.jpg'
+
+# Step 1: Extract text and marks from image
+original_text, shapes_detected, marks_detected = extract_text_and_marks(image_path)
+print(f"Original Text: {original_text}")
+
+# Step 2: Translate the extracted text
+translated_text = translate_text(original_text)
+print(f"Translated Text: {translated_text}")
+
+# Step 3: Create UML diagram in Visio
+create_uml_in_visio(translated_text, shapes_detected, marks_detected)
